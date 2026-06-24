@@ -2,8 +2,8 @@ name: COVID-19 ETL Pipeline
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # Daily 07:00 UTC = 04:00 Brasília
-  workflow_dispatch:        # Manual trigger
+    - cron: '0 7 * * *'
+  workflow_dispatch:
 
 jobs:
   etl:
@@ -12,25 +12,35 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
-        run: |
-          pip install \
-            pandas==2.1.4 \
-            requests==2.31.0 \
-            psycopg2-binary==2.9.9 \
-            python-dotenv==1.0.0 \
-            loguru==0.7.2
+        run: pip install pandas requests psycopg2-binary python-dotenv loguru
 
-      - name: 🟤 BRONZE — Ingest raw COVID data
+      - name: 🔌 Test DB connection
+        env:
+          DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          python3 -c "
+          import psycopg2, os
+          conn = psycopg2.connect(
+            host=os.environ['DB_HOST'], port='5432',
+            dbname='postgres', user='postgres',
+            password=os.environ['DB_PASSWORD'], sslmode='require'
+          )
+          cur = conn.cursor()
+          cur.execute('SELECT COUNT(*) FROM bronze.covid_raw')
+          print(f'✅ Connected! bronze.covid_raw has {cur.fetchone()[0]} rows')
+          conn.close()
+          "
+
+      - name: 🟤 BRONZE — Ingest
         env:
           DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
           DB_PORT: "5432"
@@ -39,7 +49,7 @@ jobs:
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/ingest_bronze.py
 
-      - name: ⚪ SILVER — Clean and transform
+      - name: ⚪ SILVER — Transform
         env:
           DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
           DB_PORT: "5432"
@@ -48,7 +58,7 @@ jobs:
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/transform_silver.py
 
-      - name: 🟡 GOLD — Aggregate business layer
+      - name: 🟡 GOLD — Aggregate
         env:
           DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
           DB_PORT: "5432"
@@ -57,7 +67,7 @@ jobs:
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/aggregate_gold.py
 
-      - name: ✅ Data quality tests
+      - name: ✅ Quality tests
         env:
           DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
           DB_PORT: "5432"
@@ -68,5 +78,4 @@ jobs:
 
       - name: 📢 Summary
         if: always()
-        run: |
-          echo "Pipeline finished at $(date -u '+%Y-%m-%d %H:%M UTC')"
+        run: echo "Pipeline finished at $(date -u '+%Y-%m-%d %H:%M UTC')"
