@@ -1,0 +1,37 @@
+name: 'covid_medallion'
+version: '1.0.0'
+config-version: 2
+
+profile: 'covid_medallion'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  covid_medallion:
+    bronze:
+      +schema: bronze
+      +materialized: view
+      +tags: ["bronze", "raw"]
+    silver:
+      +schema: silver
+      +materialized: incremental
+      +unique_key: ['date', 'iso_code']
+      +tags: ["silver", "clean"]
+    gold:
+      +schema: gold
+      +materialized: table
+      +tags: ["gold", "aggregated"]
+
+vars:
+  start_date: '2020-01-01'
+  covid_source: 'owid'
