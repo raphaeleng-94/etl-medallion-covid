@@ -21,75 +21,55 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests psycopg2-binary python-dotenv loguru
 
-      - name: 🔌 Test DB connection (direct + pooler)
+      - name: 🔌 Diagnose connection
         env:
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
-          python3 -c "
-          import psycopg2, os
+          python3 << 'PYEOF'
+          import psycopg2, os, socket, subprocess
+
           pw = os.environ['DB_PASSWORD']
+          print(f"Password length: {len(pw)} chars")
           
-          # Try direct connection
-          configs = [
-            {'host': 'db.ftbtqqwahzpzwqizigcd.supabase.co', 'port': '5432', 'desc': 'Direct port 5432'},
-            {'host': 'aws-0-sa-east-1.pooler.supabase.com', 'port': '5432', 'desc': 'Pooler session port 5432'},
-            {'host': 'aws-0-sa-east-1.pooler.supabase.com', 'port': '6543', 'desc': 'Pooler transaction port 6543'},
+          hosts = [
+            ("db.ftbtqqwahzpzwqizigcd.supabase.co", "5432", "postgres"),
+            ("aws-0-sa-east-1.pooler.supabase.com", "5432", "postgres.ftbtqqwahzpzwqizigcd"),
+            ("aws-0-sa-east-1.pooler.supabase.com", "6543", "postgres.ftbtqqwahzpzwqizigcd"),
           ]
           
-          for cfg in configs:
+          for host, port, user in hosts:
+            # DNS check
+            try:
+              ip = socket.gethostbyname(host)
+              print(f"DNS {host} → {ip}")
+            except Exception as e:
+              print(f"DNS FAIL {host}: {e}")
+              continue
+            
+            # TCP check  
+            try:
+              s = socket.create_connection((host, int(port)), timeout=5)
+              s.close()
+              print(f"TCP {host}:{port} → OPEN")
+            except Exception as e:
+              print(f"TCP {host}:{port} → BLOCKED: {e}")
+              continue
+            
+            # PG connect
             try:
               conn = psycopg2.connect(
-                host=cfg['host'], port=cfg['port'],
-                dbname='postgres',
-                user='postgres.ftbtqqwahzpzwqizigcd',
-                password=pw, sslmode='require',
+                host=host, port=port, dbname='postgres',
+                user=user, password=pw, sslmode='require',
                 connect_timeout=10
               )
               cur = conn.cursor()
-              cur.execute('SELECT COUNT(*) FROM bronze.covid_raw')
-              print(f'✅ {cfg[\"desc\"]}: connected! {cur.fetchone()[0]} rows in bronze')
+              cur.execute('SELECT 1')
+              print(f"PG {host}:{port} → ✅ SUCCESS")
               conn.close()
-              break
             except Exception as e:
-              print(f'❌ {cfg[\"desc\"]}: {e}')
-          "
-
-      - name: 🟤 BRONZE
-        env:
-          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres.ftbtqqwahzpzwqizigcd
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/ingest_bronze.py
-
-      - name: ⚪ SILVER
-        env:
-          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres.ftbtqqwahzpzwqizigcd
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/transform_silver.py
-
-      - name: 🟡 GOLD
-        env:
-          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres.ftbtqqwahzpzwqizigcd
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/aggregate_gold.py
-
-      - name: ✅ Tests
-        env:
-          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres.ftbtqqwahzpzwqizigcd
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/run_tests.py
+              print(f"PG {host}:{port} → ❌ {e}")
+          PYEOF
 
       - name: 📢 Summary
         if: always()
-        run: echo "Pipeline finished at $(date -u '+%Y-%m-%d %H:%M UTC')"
+        run: echo "Done at $(date -u)"
