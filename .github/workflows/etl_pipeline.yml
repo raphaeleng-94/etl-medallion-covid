@@ -2,7 +2,7 @@ name: COVID-19 ETL Pipeline
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # Daily 07:00 UTC = 04:00 Brasília
+    - cron: '0 7 * * *'
   workflow_dispatch:
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
           DB_NAME: postgres
           DB_USER: postgres
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/ingest_bronze.py
+        run: python pipeline/scripts/ingest_bronze.py 2>&1 | tee /tmp/bronze.log; exit ${PIPESTATUS[0]}
 
       - name: ⚪ SILVER — Clean and transform
         env:
@@ -57,6 +57,14 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/run_tests.py
+
+      - name: 📤 Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs
+          path: /tmp/bronze.log
+          retention-days: 1
 
       - name: 📢 Summary
         if: always()
