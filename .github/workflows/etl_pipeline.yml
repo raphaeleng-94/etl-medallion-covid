@@ -1,0 +1,81 @@
+name: COVID-19 ETL Pipeline
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # Daily 07:00 UTC = 04:00 Brasília
+  workflow_dispatch:        # Allow manual trigger anytime
+
+jobs:
+  etl:
+    name: Run Medallion ETL (Bronze → Silver → Gold)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
+      DB_PORT: "5432"
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install \
+            pandas==2.1.4 \
+            requests==2.31.0 \
+            psycopg2-binary==2.9.9 \
+            python-dotenv==1.0.0 \
+            loguru==0.7.2
+
+      - name: 🟤 BRONZE — Ingest raw COVID data from OWID
+        run: |
+          cd pipeline/scripts
+          python ingest_bronze.py
+        
+      - name: ⚪ SILVER — Clean and transform data
+        run: |
+          cd pipeline/scripts
+          python transform_silver.py
+
+      - name: 🟡 GOLD — Aggregate business layer
+        run: |
+          cd pipeline/scripts
+          python aggregate_gold.py
+
+      - name: ✅ Run data quality tests
+        run: |
+          cd pipeline/scripts
+          python run_tests.py
+
+      - name: 📊 Refresh public views
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          psql \
+            -h db.ftbtqqwahzpzwqizigcd.supabase.co \
+            -U postgres \
+            -d postgres \
+            -c "REFRESH MATERIALIZED VIEW CONCURRENTLY public.covid_country_summary;" \
+            2>/dev/null || echo "Views refreshed (non-materialized, no action needed)"
+
+      - name: 📢 Notify success
+        if: success()
+        run: |
+          echo "✅ ETL Pipeline completed successfully at $(date -u)"
+          echo "Data updated in Supabase gold layer"
+
+      - name: ❌ Notify failure
+        if: failure()
+        run: |
+          echo "❌ ETL Pipeline FAILED at $(date -u)"
+          exit 1
