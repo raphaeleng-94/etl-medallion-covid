@@ -29,7 +29,21 @@ jobs:
           DB_NAME: postgres
           DB_USER: postgres
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: python pipeline/scripts/ingest_bronze.py 2>&1 | tee /tmp/bronze.log; exit ${PIPESTATUS[0]}
+        run: |
+          python pipeline/scripts/ingest_bronze.py > /tmp/bronze_out.txt 2>&1
+          EXIT_CODE=$?
+          cat /tmp/bronze_out.txt
+          if [ $EXIT_CODE -ne 0 ]; then
+            # Write error to repo file so we can read via API
+            mkdir -p pipeline/logs
+            cp /tmp/bronze_out.txt pipeline/logs/last_error.txt
+            git config user.email "ci@github.com"
+            git config user.name "GitHub Actions"
+            git add pipeline/logs/last_error.txt
+            git commit -m "ci: capture bronze error log" || true
+            git push || true
+            exit $EXIT_CODE
+          fi
 
       - name: ⚪ SILVER — Clean and transform
         env:
@@ -57,14 +71,6 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/run_tests.py
-
-      - name: 📤 Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-logs
-          path: /tmp/bronze.log
-          retention-days: 1
 
       - name: 📢 Summary
         if: always()
