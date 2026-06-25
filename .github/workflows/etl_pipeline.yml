@@ -12,10 +12,6 @@ jobs:
     timeout-minutes: 30
 
     env:
-      DB_HOST: aws-0-sa-east-1.pooler.supabase.com
-      DB_PORT: "5432"
-      DB_NAME: postgres
-      DB_USER: postgres.ftbtqqwahzpzwqizigcd
       DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
     steps:
@@ -28,40 +24,73 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests psycopg2-binary python-dotenv loguru
 
-      - name: 🔌 Test connection
+      - name: 🔌 Test ALL connection variants
         run: |
-          python3 -c "
-          import psycopg2, os
-          conn = psycopg2.connect(
-            host=os.environ['DB_HOST'], port=os.environ['DB_PORT'],
-            dbname=os.environ['DB_NAME'], user=os.environ['DB_USER'],
-            password=os.environ['DB_PASSWORD'], sslmode='require'
-          )
-          cur = conn.cursor()
-          cur.execute('SELECT COUNT(*) FROM bronze.covid_raw')
-          print(f'✅ Connected via pooler! bronze rows: {cur.fetchone()[0]}')
+          python3 << 'PYEOF'
+          import psycopg2, os, sys
+
+          pw = os.environ.get('DB_PASSWORD', '')
+          print(f"Password received: length={len(pw)}, first_char={repr(pw[0]) if pw else 'EMPTY'}")
           
-          # Show table structure
-          cur.execute('''
-            SELECT column_name, data_type FROM information_schema.columns 
-            WHERE table_schema=$$bronze$$ AND table_name=$$covid_raw$$
-            ORDER BY ordinal_position
-          ''')
-          for row in cur.fetchall():
-            print(f'  col: {row[0]} ({row[1]})')
-          conn.close()
-          "
+          variants = [
+            # (host, port, user, desc)
+            ('db.ftbtqqwahzpzwqizigcd.supabase.co', '5432', 'postgres', 'direct-5432'),
+            ('aws-0-sa-east-1.pooler.supabase.com', '5432', 'postgres.ftbtqqwahzpzwqizigcd', 'pooler-session-5432'),
+            ('aws-0-sa-east-1.pooler.supabase.com', '6543', 'postgres.ftbtqqwahzpzwqizigcd', 'pooler-transaction-6543'),
+          ]
+          
+          ok = False
+          for host, port, user, desc in variants:
+            try:
+              conn = psycopg2.connect(
+                host=host, port=port, dbname='postgres',
+                user=user, password=pw, sslmode='require',
+                connect_timeout=15
+              )
+              cur = conn.cursor()
+              cur.execute('SELECT 1 as test')
+              print(f'✅ {desc}: OK')
+              conn.close()
+              ok = True
+              break
+            except psycopg2.OperationalError as e:
+              print(f'❌ {desc}: {str(e)[:200]}')
+            except Exception as e:
+              print(f'❌ {desc}: {type(e).__name__}: {str(e)[:200]}')
+          
+          sys.exit(0 if ok else 1)
+          PYEOF
 
       - name: 🟤 BRONZE — Ingest raw COVID data
+        env:
+          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
+          DB_PORT: "5432"
+          DB_NAME: postgres
+          DB_USER: postgres.ftbtqqwahzpzwqizigcd
         run: python pipeline/scripts/ingest_bronze.py
 
       - name: ⚪ SILVER — Clean and transform
+        env:
+          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
+          DB_PORT: "5432"
+          DB_NAME: postgres
+          DB_USER: postgres.ftbtqqwahzpzwqizigcd
         run: python pipeline/scripts/transform_silver.py
 
       - name: 🟡 GOLD — Aggregate business layer
+        env:
+          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
+          DB_PORT: "5432"
+          DB_NAME: postgres
+          DB_USER: postgres.ftbtqqwahzpzwqizigcd
         run: python pipeline/scripts/aggregate_gold.py
 
       - name: ✅ Data quality tests
+        env:
+          DB_HOST: aws-0-sa-east-1.pooler.supabase.com
+          DB_PORT: "5432"
+          DB_NAME: postgres
+          DB_USER: postgres.ftbtqqwahzpzwqizigcd
         run: python pipeline/scripts/run_tests.py
 
       - name: 📢 Summary
