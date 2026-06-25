@@ -11,9 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    env:
-      DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +22,8 @@ jobs:
         run: pip install pandas requests psycopg2-binary loguru
 
       - name: 🔌 Test connection
+        env:
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/test_connection.py
 
       - name: 🟤 BRONZE
@@ -33,6 +32,7 @@ jobs:
           DB_PORT: "5432"
           DB_NAME: postgres
           DB_USER: postgres.ftbtqqwahzpzwqizigcd
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/ingest_bronze.py
 
       - name: ⚪ SILVER
@@ -41,6 +41,7 @@ jobs:
           DB_PORT: "5432"
           DB_NAME: postgres
           DB_USER: postgres.ftbtqqwahzpzwqizigcd
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/transform_silver.py
 
       - name: 🟡 GOLD
@@ -49,6 +50,7 @@ jobs:
           DB_PORT: "5432"
           DB_NAME: postgres
           DB_USER: postgres.ftbtqqwahzpzwqizigcd
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/aggregate_gold.py
 
       - name: ✅ Tests
@@ -57,6 +59,7 @@ jobs:
           DB_PORT: "5432"
           DB_NAME: postgres
           DB_USER: postgres.ftbtqqwahzpzwqizigcd
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/run_tests.py
 
       - name: 📢 Summary
