@@ -11,6 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      DB_HOST: aws-0-sa-east-1.pooler.supabase.com
+      DB_PORT: "5432"
+      DB_NAME: postgres
+      DB_USER: postgres.ftbtqqwahzpzwqizigcd
+      DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,81 +28,40 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests psycopg2-binary python-dotenv loguru
 
-      - name: 🔍 Test bronze table structure
-        env:
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - name: 🔌 Test connection
         run: |
-          python3 << 'PYEOF'
+          python3 -c "
           import psycopg2, os
           conn = psycopg2.connect(
-            host='db.ftbtqqwahzpzwqizigcd.supabase.co',
-            port='5432', dbname='postgres', user='postgres',
+            host=os.environ['DB_HOST'], port=os.environ['DB_PORT'],
+            dbname=os.environ['DB_NAME'], user=os.environ['DB_USER'],
             password=os.environ['DB_PASSWORD'], sslmode='require'
           )
           cur = conn.cursor()
+          cur.execute('SELECT COUNT(*) FROM bronze.covid_raw')
+          print(f'✅ Connected via pooler! bronze rows: {cur.fetchone()[0]}')
           
-          # Show table columns
-          cur.execute("""
-            SELECT column_name, data_type, is_nullable 
-            FROM information_schema.columns 
-            WHERE table_schema='bronze' AND table_name='covid_raw'
+          # Show table structure
+          cur.execute('''
+            SELECT column_name, data_type FROM information_schema.columns 
+            WHERE table_schema=$$bronze$$ AND table_name=$$covid_raw$$
             ORDER BY ordinal_position
-          """)
-          print("=== bronze.covid_raw columns ===")
+          ''')
           for row in cur.fetchall():
-            print(f"  {row[0]}: {row[1]} (nullable={row[2]})")
-          
-          # Test minimal insert
-          try:
-            cur.execute("SAVEPOINT test_insert")
-            cur.execute("""
-              INSERT INTO bronze.covid_raw 
-                (date, country, iso_code, continent, raw_json, source_url, batch_id, ingested_at)
-              VALUES ('2023-01-01', 'Test', 'TST', 'Test', '{}', 'test', 'test-id', NOW())
-            """)
-            cur.execute("ROLLBACK TO SAVEPOINT test_insert")
-            print("✅ Minimal INSERT works!")
-          except Exception as e:
-            print(f"❌ INSERT failed: {e}")
-          
-          conn.rollback()
+            print(f'  col: {row[0]} ({row[1]})')
           conn.close()
-          PYEOF
+          "
 
       - name: 🟤 BRONZE — Ingest raw COVID data
-        env:
-          DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/ingest_bronze.py
 
       - name: ⚪ SILVER — Clean and transform
-        env:
-          DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/transform_silver.py
 
       - name: 🟡 GOLD — Aggregate business layer
-        env:
-          DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/aggregate_gold.py
 
       - name: ✅ Data quality tests
-        env:
-          DB_HOST: db.ftbtqqwahzpzwqizigcd.supabase.co
-          DB_PORT: "5432"
-          DB_NAME: postgres
-          DB_USER: postgres
-          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: python pipeline/scripts/run_tests.py
 
       - name: 📢 Summary
