@@ -13,7 +13,6 @@ jobs:
 
     env:
       DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,61 +24,8 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests psycopg2-binary loguru
 
-      - name: 🔌 Diagnose and post result to gist
-        run: |
-          python3 << 'PYEOF'
-          import psycopg2, os, json, urllib.request, sys
-
-          pw = os.environ.get('DB_PASSWORD', '')
-          token = os.environ.get('GH_TOKEN', '')
-          output_lines = []
-          output_lines.append(f"Password length: {len(pw)}")
-          output_lines.append(f"First 3 chars: {repr(pw[:3])}")
-          
-          variants = [
-            ('db.ftbtqqwahzpzwqizigcd.supabase.co', '5432', 'postgres'),
-            ('aws-0-sa-east-1.pooler.supabase.com', '5432', 'postgres.ftbtqqwahzpzwqizigcd'),
-            ('aws-0-sa-east-1.pooler.supabase.com', '6543', 'postgres.ftbtqqwahzpzwqizigcd'),
-          ]
-          
-          ok = False
-          for host, port, user in variants:
-            try:
-              conn = psycopg2.connect(
-                host=host, port=port, dbname='postgres',
-                user=user, password=pw, sslmode='require',
-                connect_timeout=15
-              )
-              cur = conn.cursor()
-              cur.execute('SELECT 1')
-              output_lines.append(f'SUCCESS: {host}:{port} user={user}')
-              conn.close()
-              ok = True
-              break
-            except Exception as e:
-              output_lines.append(f'FAIL {host}:{port}: {str(e)[:300]}')
-          
-          content = '\n'.join(output_lines)
-          print(content)
-          
-          # Post to gist
-          gist_data = json.dumps({
-            "description": "ETL Pipeline DB Diagnostic",
-            "public": True,
-            "files": {"diagnostic.txt": {"content": content}}
-          }).encode()
-          req = urllib.request.Request(
-            'https://api.github.com/gists',
-            data=gist_data, method='POST',
-            headers={'Authorization': f'token {token}',
-                     'Content-Type': 'application/json'}
-          )
-          with urllib.request.urlopen(req) as r:
-            gist = json.loads(r.read())
-            print(f"Gist: {gist['html_url']}")
-          
-          sys.exit(0 if ok else 1)
-          PYEOF
+      - name: 🔌 Test connection
+        run: python pipeline/scripts/test_connection.py
 
       - name: 🟤 BRONZE
         env:
